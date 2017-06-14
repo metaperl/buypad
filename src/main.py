@@ -16,7 +16,7 @@ from tabulate import tabulate
 import exchange as _exchange
 import exception
 from mynumbers import F, CF
-from persist import Persist
+
 
 # os.chdir("/home/schemelab/prg/adsactly-gridtrader/src")
 
@@ -48,19 +48,19 @@ def display_balances(e):
 {}
 """.format(pairs, coinstr))
 
-        
+
 def _set_balances(exchange, config_filename, config):
     section = 'initialcorepositions'
     config.remove_section(section)
     config.add_section(section)
-    
+
     balances = get_balances(exchange)
     for coin in sorted(balances.keys()):
         logging.debug("COIN %s", coin)
         config.set(section, coin, balances[coin]['TOTAL'])
     logging.debug("Writing data to %s:", config_filename)
     with open(config_filename, 'w') as configfile:
-        config.write(configfile)    
+        config.write(configfile)
 
 def display_session_info(session_args, e, end=False):
     session_date = datetime.now().strftime('%a, %d %b %Y %H:%M:%S +0000')
@@ -77,8 +77,8 @@ def display_session_info(session_args, e, end=False):
     )
 
 
-def config_file_name(exchange, account):
-    return "config/{}/{}.ini".format(exchange, account)
+def config_file_name(account):
+    return "config/{}.ini".format(account)
 
 
 def persistence_file_name(exch):
@@ -110,188 +110,10 @@ def i_range(a):
         return "from {0} to {1}".format(0, len(a)-1)
 
 
-class Grid(object):
-    def __init__(
-            self, pair, current_market_price, gridtrader):
+class TradePad(object):
 
-        logging.debug("Initializing %s grid with current market price = %.8f",
-                      pair, current_market_price)
-
-        self.trade_ids = list()
-
-        self.pair = pair
-        self.current_market_price = current_market_price
-        self.gridtrader = gridtrader
-        self.make_grid()
-
-    @property
-    def initial_core_position(self):
-        return self.config.getfloat(
-            'initialcorepositions', self.exchange.baseOf(self.pair))
-
-    @property
-    def exchange(self):
-        return self.gridtrader.exchange
-
-    @property
-    def config(self):
-        return self.gridtrader.config
-
-    @property
-    def majorLevel(self):
-        return percent2ratio(CF(self.config, self.config_section, 'majorLevel'))
-
-    @property
-    def numberOfOrders(self):
-        return self.config.getint(self.config_section, 'numberOfOrders')
-
-    @property
-    def increments(self):
-        return percent2ratio(
-            self.config.getfloat(self.config_section, 'increments'))
-
-    @property
-    def config_section(self):
-        return self.__class__.__name__.lower()
-
-    @property
-    def size(self):
-
-        return (
-            percent2ratio(self.config.getfloat(self.config_section, 'size'))
-            * self.initial_core_position
-            / self.numberOfOrders
-        )
-
-
-    def trade_activity(self, exchange):
-        for i in xrange(len(self.trade_ids)-1, -1, -1):
-            uuid = self.trade_ids[i]
-            if not self.exchange.isOpen(uuid):
-                return i
-
-        return None
-
-    def purge_closed_trades(self, deepest_i):
-        new_grid = list()
-        new_trade_ids = list()
-        for i in xrange(0, len(self.trade_ids)):
-            if i > deepest_i:
-                new_grid.append(self.grid[i])
-                new_trade_ids.append(self.trade_ids[i])
-
-        self.grid = new_grid
-        self.trade_ids = new_trade_ids
-
-    def __str__(self):
-
-        config_s = str()
-        for grid_section in 'sellgrid buygrid'.split():
-            config_s += "<{0}>".format(grid_section)
-            for option in self.config.options(grid_section):
-                config_s += "{0}={1}".format(
-                    option, self.config.get(grid_section, option))
-            config_s += "</{0}>".format(grid_section)
-
-
-        table = [
-            ["Core Position", self.initial_core_position],
-            ["Pair", self.pair],
-            ["Current Market Price", self.current_market_price],
-            ["Grid Config", config_s],
-            ["Size", self.size],
-            ["Starting Price", self.starting_price],
-            ["Grid", self.grid],
-            ["Grid Trade Ids", self.trade_ids],
-        ]
-
-        myname = type(self).__name__
-        return "  <{}>\n{}\n  </{}>\n".format(myname, tabulate(table, tablefmt="plain"), myname)
-
-class SellGrid(Grid):
-
-    def __init__(self, pair, current_market_price, gridtrader):
-        super(type(self), self).__init__(
-            pair, current_market_price, gridtrader)
-
-    @property
-    def starting_price(self):
-
-        return (
-            self.current_market_price +
-            self.current_market_price * self.majorLevel
-        )
-
-    def make_grid(self):
-        retval = list()
-        last_price = self.starting_price
-        for i in range(0, self.numberOfOrders):
-            retval.append(last_price)
-            next_price = last_price + last_price * self.increments
-            # print next_price
-            last_price = next_price
-
-        self.grid = retval
-
-    def place_orders(self, exchange):
-        logging.debug("<PLACE_ORDERS>")
-
-        for rate in self.grid:
-            r = exchange.sell(self.pair, rate, self.size)
-            self.trade_ids.append(r.orderNumber)
-
-        logging.debug("</PLACE_ORDERS>")
-
-        return self
-
-class BuyGrid(Grid):
-
-    def __init__(self, pair, current_market_price, gridtrader):
-        super(type(self), self).__init__(
-            pair, current_market_price, gridtrader)
-
-    @property
-    def starting_price(self):
-        return (
-            self.current_market_price -
-            self.current_market_price * self.majorLevel
-        )
-
-    @property
-    def profitTarget(self):
-        return self.config.getfloat(self.config_section, 'profitTarget')
-
-    def make_grid(self):
-        retval = list()
-        last_price = self.starting_price
-        for i in range(0, self.numberOfOrders):
-            retval.append(last_price)
-            next_price = last_price - last_price * self.increments
-            # print next_price
-            last_price = next_price
-
-        self.grid = retval
-
-    def place_orders(self, exchange):
-        print "<PLACE_ORDERS>"
-
-        self.remaining = dict()
-
-        for rate in self.grid:
-            r = exchange.buy(self.pair, rate, self.size)
-            self.trade_ids.append(r.orderNumber)
-
-        print "</PLACE_ORDERS>"
-
-        return self
-
-
-class GridTrader(object):
-
-    def __init__(self, exchange, config, account):
-        self.exchange, self.config = exchange, config
-        self.account = account
-        self.market = dict()
+    def __init__(self, config):
+        self.config = config
 
     def __str__(self):
         s = str()
@@ -303,6 +125,35 @@ class GridTrader(object):
 
         return "{0}\n{1}".format(type(self).__name__, s)
 
+    def rate_for(self, exchange, mkt, btc):
+        "Return the rate that works for a particular amount of BTC."
+
+        coin_amount = 0
+        btc_spent = 0
+        logging.debug("Getting sell order book for %s", mkt)
+        orders = exchange.returnSellOrderBook(mkt)
+        for order in orders:
+            btc_spent += order['Rate'] * order['Quantity']
+            if btc_spent > btc:
+                break
+
+        coin_amount = btc / order['Rate']
+        return order['Rate'], coin_amount
+
+    def btc(self, exchange):
+        b = exchange.returnBalance('BTC')
+        b = b['Available']
+        logging.debug("BAL: %s", b)
+        return b
+
+    def execute(self):
+        exchange_name = 'bittrex'
+        exchange = _exchange.exchangeFactory(exchange_name, self.config)
+        for market, ratio in self.config.items(exchange_name):
+            ratio = float(ratio)
+            btc_to_spend = self.btc(exchange) * ratio
+            rate, amount = self.rate_for(exchange, market, btc_to_spend)
+            exchange.buy(market, rate, amount)
 
     @property
     def pairs(self):
@@ -499,13 +350,13 @@ def print_balances(e):
     logging.debug(b.pformat())
 
 
-def initialize_logging(exchange_name, account_name, args):
+def initialize_logging(account_name, args):
 
     args = pdict(args)
 
     rootLogger = logging.getLogger()
 
-    logPath = 'log/{}/{}'.format(exchange_name, account_name)
+    logPath = 'log/{}'.format(account_name)
     fileName = "{0}--{1}".format(
         time.strftime("%Y%m%d-%H %M %S"),
         args
@@ -533,77 +384,23 @@ def main_init(exchange, gt, persistence_file):
 
     logging.debug("Storing GridTrader to disk.")
     Persist(persistence_file).store(gt)
-            
-@arg('--cancel-all', help="Cancel all open orders, even if this program did not open them")
-@arg('--init', help="Create new trade grids, issue trades and persist grids.")
-@arg('--monitor', help="See if any trades in grid have closed and adjust accordingly")
-@arg('--status-of', help="(Developer use only) Get the status of a trade by trade id")
+
 @arg('account', help="The account whose API keys we are using (e.g. terrence, joseph, peter, etc.")
-@arg('exchange-name', help="on which exchange (polo, trex, gdax)")
-@arg('--balances', help="list coin holdings")
-@arg('--set-balances', help="Alter [initialcorepositions] section of config file based on exchange holdings.")
 def main(
-        exchange_name,
         account,
-        cancel_all=False,
-        init=False,
-        monitor=False,
-        balances=False,
-        set_balances=False,
-        status_of='',
 ):
 
     command_line_args = locals()
 
-    args, fileName = initialize_logging(exchange_name, account, command_line_args)
+    args, fileName = initialize_logging(account, command_line_args)
 
-    config_file = config_file_name(exchange_name, account)
+    config_file = config_file_name(account)
     config = ConfigParser.RawConfigParser()
     config.read(config_file)
 
-    persistence_file = persistence_file_name(account)
+    tp = TradePad(config)
+    tp.execute()
 
-    exchange = _exchange.exchangeFactory(exchange_name, config)
-
-    display_session_info(args, exchange)
-
-    gt = GridTrader(exchange, config, account)
-
-    try:
-
-        if cancel_all:
-            exchange.cancelAllOpen()
-
-        if init:
-            main_init(exchange, gt, persistence_file)
-
-        if monitor:
-            logging.debug("Evaluating trade activity since last invocation")
-            persistence = Persist(persistence_file)
-            gt = persistence.retrieve()
-            gt.poll()
-            persistence.store(gt)
-
-        if balances:
-            logging.debug("Getting balances")
-            display_balances(exchange)
-
-        if set_balances:
-            logging.debug("Setting balances")
-            _set_balances(exchange, config_file, config)
-            main_init(exchange, gt, persistence_file)
-        
-        if status_of:
-            logging.debug("Getting status of order")
-            get_status_of(status_of)
-
-    except Exception as e:
-        error_msg = traceback.format_exc()
-        logging.debug('Aborting: %s', error_msg)
-        gt.notify_admin(error_msg)
-
-
-    display_session_info(args, exchange, end=True)
 
 if __name__ == '__main__':
     dispatch_command(main)

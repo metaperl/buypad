@@ -190,8 +190,7 @@ class BittrexFacade(PoloniexFacade):
             return data
 
     def verify(self, r):
-        # mute_methods = 'returnPositiveBalances returnTicker cancelAllOpen'
-        mute_methods = 'returnTicker cancelAllOpen'
+        mute_methods = 'return SellOrderBook returnOrderBook returnPositiveBalances returnTicker cancelAllOpen'
         if not r.get('success'):
             exception.identify_and_raise(r.get('message'))
         r = self.wrap(r['result'])
@@ -243,6 +242,14 @@ class BittrexFacade(PoloniexFacade):
 
     def returnTicker(self):
         return self.verify(self.api.get_market_summaries())
+
+    def returnOrderBook(self, market):
+        return self.verify(self.api.get_orderbook(market, 'both'))
+
+    def returnSellOrderBook(self, market):
+        return self.verify(self.api.get_orderbook(market, 'sell'))
+
+
 
     def tickerFor(self, market):
         all_markets_ticker = self.returnTicker()
