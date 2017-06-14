@@ -149,9 +149,7 @@ class TradePad(object):
     def execute(self):
         exchange_name = 'bittrex'
         exchange = _exchange.exchangeFactory(exchange_name, self.config)
-        for market, ratio in self.config.items(exchange_name):
-            ratio = float(ratio)
-            btc_to_spend = self.btc(exchange) * ratio
+        for market, btc_to_spend in self.config.items(exchange_name):
             rate, amount = self.rate_for(exchange, market, btc_to_spend)
             exchange.buy(market, rate, amount)
 
